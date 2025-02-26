@@ -1,0 +1,64 @@
+# -----------------------------
+# Stage 1: Builder
+# -----------------------------
+    FROM node:20-slim AS builder
+
+    RUN apt-get update && apt-get install -y bash
+    
+    # 1) Install pnpm and dev deps
+    RUN npm install -g pnpm@9.15.4 && \
+        apt-get update && \
+        apt-get upgrade -y && \
+        apt-get install -y \
+            git python3 python3-pip curl node-gyp ffmpeg \
+            libtool-bin autoconf automake libopus-dev \
+            make g++ build-essential \
+            libcairo2-dev libjpeg-dev libpango1.0-dev \
+            libgif-dev openssl libssl-dev libsecret-1-dev && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/*
+    
+    # 2) Symlink python
+    RUN ln -sf /usr/bin/python3 /usr/bin/python
+    
+    WORKDIR /app
+    
+    # 3) Copy all sources
+    COPY . .
+    
+    # 4) Install + build
+    RUN pnpm install --no-frozen-lockfile
+    RUN pnpm run build && pnpm prune --prod
+    
+    # -----------------------------
+    # Stage 2: Final (Runtime)
+    # -----------------------------
+    FROM node:20-slim
+
+    
+    RUN npm install -g pnpm@9.15.4 && \
+        apt-get update && \
+        apt-get install -y git python3 ffmpeg && \
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/*
+    
+    WORKDIR /app
+    
+    # Copy from builder stage
+    COPY --from=builder /app/package.json ./
+    COPY --from=builder /app/pnpm-workspace.yaml ./
+    COPY --from=builder /app/.npmrc ./
+    COPY --from=builder /app/turbo.json ./
+    COPY --from=builder /app/node_modules ./node_modules
+    COPY --from=builder /app/agent ./agent
+    COPY --from=builder /app/lerna.json ./
+    COPY --from=builder /app/packages ./packages
+    COPY --from=builder /app/scripts ./scripts
+    COPY --from=builder /app/characters ./characters
+    
+    # Expose agent port
+    EXPOSE 3000
+    
+    # Agent command
+    CMD ["pnpm", "start", "--characters=characters/livi.character.json"]
+    
